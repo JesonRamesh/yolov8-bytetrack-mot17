@@ -152,7 +152,7 @@ Target for Jetson AGX Orin: YOLOv8s INT8 at 480px + ByteTrack C++ → estimated 
 
 1. Open `notebook.ipynb` in Google Colab with a T4 GPU runtime
 2. Run **Cell 0** → **Runtime → Restart session**
-3. Fill in Kaggle credentials in **Cell 2**
+3. Fill in your Kaggle credentials in **Cell 2** (`config.py` is pre-populated in the notebook)
 4. Run **Cells 1–5** top to bottom
 5. Expected total time: ~12 min
 
@@ -162,48 +162,89 @@ Target for Jetson AGX Orin: YOLOv8s INT8 at 480px + ByteTrack C++ → estimated 
 git clone https://github.com/<your-handle>/yolov8-bytetrack-mot17
 cd yolov8-bytetrack-mot17
 
-pip install ultralytics scipy matplotlib kaggle tqdm
+# Install dependencies
+pip install -r requirements.txt
 git clone https://github.com/JonathonLuiten/TrackEval.git
 
-# Download MOT17 (fill in credentials first)
-python step2_download_mot17.py
-
-# Run pipeline
-python step3_inference.py
-python step4_bytetrack.py
-python step5_evaluate.py
+# Patch TrackEval for numpy 2.x compatibility
+python setup.py patch-trackeval
 ```
 
-### Expected output
+Then fill in your Kaggle credentials in `config.py`:
 
+```python
+KAGGLE_USERNAME = "your_username_here"
+KAGGLE_KEY      = "your_key_here"
 ```
-RESULTS: YOLOv8x + ByteTrack on MOT17 (5-sequence subset)
-Sequence                        HOTA       DetA       AssA       MOTA       IDF1     Recall  Precision
-──────────────────────────────────────────────────────────────────────────────────────────────────────
-MOT17-02-SDP                   31.7%      17.5%      42.1%      19.5%      25.7%      20.2%      97.0%
-MOT17-04-SDP                   38.7%      21.4%      51.2%      22.3%      34.7%      24.1%      93.2%
-MOT17-05-SDP                   63.9%      44.7%      46.3%      52.0%      61.7%      60.7%      88.7%
-MOT17-09-SDP                   61.0%      56.9%      41.0%      65.8%      58.2%      70.8%      94.2%
-MOT17-13-SDP                   37.1%      19.2%      46.6%      21.9%      32.3%      23.7%      94.4%
-COMBINED                       41.4%      24.3%      47.8%      26.5%      37.2%      28.8%      93.2%
+
+Then run the pipeline in order:
+
+```bash
+python data.py        # download MOT17 (~5.5 GB)
+python detect.py      # YOLOv8x inference → /content/detections/
+python track.py       # ByteTrack association → /content/tracks/
+python evaluate.py    # TrackEval → HOTA / MOTA / IDF1
 ```
+
+### File overview
+
+| File | Responsibility |
+|:-----|:--------------|
+| `config.py` | All paths, thresholds, and hyperparameters — edit this to change any setting |
+| `setup.py` | Colab environment fix, dependency install, TrackEval numpy patch |
+| `data.py` | MOT17 download, seqinfo parsing, detection/track file I/O |
+| `detect.py` | YOLOv8x inference → per-sequence MOT-format detection files |
+| `track.py` | ByteTrack implementation (Kalman filter, IoU matching) + tracking loop |
+| `evaluate.py` | TrackEval setup, HOTA/MOTA/IDF1 evaluation, metrics display |
+| `requirements.txt` | pip dependencies for local use |
+| `notebook.ipynb` | End-to-end Colab notebook combining all steps |
+
+### Modifying hyperparameters
+
+All tunable settings live in `config.py`. The most impactful ones:
+
+| Parameter | Default | Effect |
+|:----------|--------:|:-------|
+| `CONF_THRESH` | 0.35 | Lower → more recall, more FP detections fed to tracker |
+| `TRACK_HIGH_THRESH` | 0.6 | Threshold for first ByteTrack association pass |
+| `TRACK_LOW_THRESH` | 0.1 | Threshold for second ByteTrack association pass |
+| `NEW_TRACK_THRESH` | 0.7 | Minimum score to start a new tracklet |
+| `TRACK_BUFFER` | 30 | Frames a lost track survives before deletion |
+| `MATCH_THRESH` | 0.8 | Maximum IoU cost for a valid match |
 
 ---
 
 ## Repository Structure
 
 ```
-.
-├── notebook.ipynb              # End-to-end Colab notebook (6 cells)
-├── step0_fix_env.py            # Colab numpy environment fix (run once)
-├── step1_install_deps.py       # Install all dependencies
-├── step2_download_mot17.py     # Download MOT17 from Kaggle
-├── step3_inference.py          # YOLOv8x detection → MOT-format .txt
-├── step4_bytetrack.py          # ByteTrack association → track .txt
-├── step5_evaluate.py           # TrackEval → HOTA / MOTA / IDF1
+yolov8-bytetrack-mot17/
+├── config.py          # all hyperparameters and paths — start here
+├── setup.py           # environment fix, dependency install, TrackEval patch
+├── data.py            # MOT17 download and dataset I/O utilities
+├── detect.py          # YOLOv8x inference → MOT-format detection files
+├── track.py           # ByteTrack (Kalman filter + IoU association) + tracking loop
+├── evaluate.py        # TrackEval setup, HOTA/MOTA/IDF1 evaluation, results display
+├── requirements.txt   # pip dependencies for local/cluster use
+├── notebook.ipynb     # end-to-end Colab notebook (mirrors the .py pipeline)
 └── README.md
 ```
 
+Generated at runtime (not committed):
+
+```
+/content/
+├── MOT17/train/
+│   └── MOT17-02-SDP/
+│       ├── img1/          # frames as %06d.jpg
+│       ├── gt/gt.txt      # ground truth in MOT format
+│       └── seqinfo.ini    # sequence metadata
+├── detections/
+│   └── MOT17-02-SDP.txt   # <frame>,-1,<x>,<y>,<w>,<h>,<conf>,-1,-1,-1
+├── tracks/
+│   └── MOT17-02-SDP.txt   # <frame>,<id>,<x>,<y>,<w>,<h>,<conf>,-1,-1,-1
+└── trackeval_results/
+    └── summary.json
+```
 ---
 
 ## References
